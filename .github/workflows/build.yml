@@ -1,0 +1,77 @@
+name: Build T225 KernelSU-Next kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_ref:
+        description: "KernelSU-Next branch or tag (keep: legacy)"
+        default: "legacy"
+      manager_apk_url:
+        description: "Direct link to the Manager .apk (optional)"
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      WORK: ${{ github.workspace }}/_work
+      OUTDIR: ${{ github.workspace }}/_out
+      GH_TOKEN: ${{ github.token }}
+      KSU_REF: ${{ inputs.ksu_ref }}
+      APK_URL: ${{ inputs.manager_apk_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download kernel source and build files (Release src-v1)
+        run: |
+          gh release download src-v1 -R "$GITHUB_REPOSITORY" -p kernel_src.tar.gz -p T225_GitHub_Repo_Files.zip
+          unzip -oq T225_GitHub_Repo_Files.zip -x '.github/*'
+
+      - name: Get Manager APK (optional)
+        continue-on-error: true
+        run: |
+          mkdir -p _apk
+          if [ -n "$APK_URL" ]; then
+            curl -fL -o _apk/manager.apk "$APK_URL"
+          else
+            gh release download -R KernelSU-Next/KernelSU-Next -p '*spoofed*release.apk' -D _apk
+            mv _apk/*.apk _apk/manager.apk
+          fi
+          ls -l _apk
+
+      - name: Setup (deps, toolchain, source, KernelSU-Next)
+        run: bash scripts/01_setup.sh "$KSU_REF"
+
+      - name: Build kernel
+        run: |
+          bash scripts/02_build.sh
+          tail -n 3 "$WORK/build.log"
+          grep -q 'BUILD_EXIT=0' "$WORK/build.log"
+
+      - name: Show errors if build failed
+        if: failure()
+        run: grep -n "error:\|Error " "$WORK/build.log" | head -40 || true
+
+      - name: Package flashable zip
+        run: |
+          APK=""
+          [ -f _apk/manager.apk ] && APK="$PWD/_apk/manager.apk"
+          bash scripts/03_package.sh "$APK"
+
+      - name: Publish Release
+        run: |
+          ZIP=$(ls "$OUTDIR"/*.zip)
+          gh release create "build-${{ github.run_number }}" "$ZIP" \
+            --title "T225 build #${{ github.run_number }} (KernelSU-Next: $KSU_REF)" \
+            --notes "Auto-built flashable zip. Check after flashing: boots, WiFi/Bluetooth, overclock."
+
+      - name: Keep build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: _work/build.log
