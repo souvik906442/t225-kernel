@@ -31,18 +31,6 @@ jobs:
           gh release download src-v1 -R "$GITHUB_REPOSITORY" -p kernel_src.tar.gz -p T225_GitHub_Repo_Files.zip
           unzip -oq T225_GitHub_Repo_Files.zip -x '.github/*'
 
-      - name: Get Manager APK (optional)
-        continue-on-error: true
-        run: |
-          mkdir -p _apk
-          if [ -n "$APK_URL" ]; then
-            curl -fL -o _apk/manager.apk "$APK_URL"
-          else
-            gh release download -R KernelSU-Next/KernelSU-Next -p '*spoofed*release.apk' -D _apk
-            mv _apk/*.apk _apk/manager.apk
-          fi
-          ls -l _apk
-
       - name: Setup (deps, toolchain, source, KernelSU-Next)
         run: bash scripts/01_setup.sh "$KSU_REF"
 
