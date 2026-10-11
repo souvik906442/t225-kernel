@@ -33,7 +33,14 @@ jobs:
 
       - name: Setup (deps, toolchain, source, KernelSU-Next)
         run: bash scripts/01_setup.sh "$KSU_REF"
-
+      - name: Find CPU OPP table files
+        run: |
+          D=$(find "$WORK" -type d -path '*/drivers/misc/mediatek' | head -1)
+          echo "mediatek dir: $D"
+          echo "--- big cluster (2301)"
+          grep -rnE "2301000|\b2301\b" "$D" --include=*.c --include=*.h | head -40
+          echo "--- little cluster (1800)"
+          grep -rnE "1800000|\b1800\b" "$D" --include=*.c --include=*.h | grep -i cpu | head -40
       - name: Build kernel
         run: |
           bash scripts/02_build.sh
