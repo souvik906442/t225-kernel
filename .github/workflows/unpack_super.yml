@@ -23,7 +23,7 @@ jobs:
       - name: Install tools
         run: |
           pip install gdown --break-system-packages
-          pip install lpunpack --break-system-packages
+          pip install git+https://github.com/unix3dgforce/lpunpack --break-system-packages
 
       - name: Download super.img from Drive
         run: |
