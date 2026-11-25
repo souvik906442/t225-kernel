@@ -22,7 +22,7 @@ on:
         description: "For neutron/zyc/slim/llvm only. Direct link to a Linux x86_64 .tar.xz / .tar.zst / .tar.gz (empty = auto: newest release of the chosen toolchain; llvm = LLVM 23.1.1 official)"
         default: ""
       features:
-        description: "Extra kernel features (space separated): bbr | bbrdef | perf | wireguard | nohuc | none  (bbr = BBR+FQ+FQ_CODEL available; bbrdef = also default cc/qdisc; perf = -O2 + BLK_WBT; nohuc = CONFIG_HARDENED_USERCOPY turned OFF)"
+        description: "Extra kernel features (space separated): bbr | bbrdef | perf | wireguard | nohuc | quietpod | lean | lean2 | nosec | none  (bbr = BBR+FQ+FQ_CODEL available; bbrdef = also default cc/qdisc; perf = -O2 + BLK_WBT; nohuc = HARDENED_USERCOPY off, Wi-Fi/BT safe)"
         default: "bbr bbrdef perf nohuc"
 
       fetch_modules:
@@ -66,21 +66,6 @@ jobs:
         run: |
           gh release download src-v1 -R "$GITHUB_REPOSITORY" -p kernel_src.tar.gz -p T225_GitHub_Repo_Files.zip
           unzip -oq T225_GitHub_Repo_Files.zip -x '.github/*'
-
-      # build.yml-only features (04_extra_features.sh does not know them, so they are taken out of FEATURES here).
-      # nohuc = turn CONFIG_HARDENED_USERCOPY off. FEATURES_ALL keeps the full list for the Telegram caption.
-      - name: Split build.yml-only features (nohuc)
-        run: |
-          REST=""; NOHUC=0
-          for f in $(echo "$FEATURES" | tr ',' ' '); do
-            if [ "$f" = nohuc ]; then NOHUC=1; else REST="$REST $f"; fi
-          done
-          REST=$(echo $REST)
-          [ -z "$REST" ] && REST=none
-          echo "FEATURES_ALL=$FEATURES" >> "$GITHUB_ENV"
-          echo "FEATURES=$REST" >> "$GITHUB_ENV"
-          echo "NOHUC=$NOHUC" >> "$GITHUB_ENV"
-          echo "features for 04_extra_features.sh: $REST | nohuc=$NOHUC"
 
       # Experimental: other clang instead of the crDroid clang 11.0.1.
       # It is unpacked to $WORK/toolchain_611, so 01_setup.sh skips its own git clone and
@@ -198,26 +183,6 @@ jobs:
       - name: Setup (deps, toolchain, source, KernelSU-Next)
         run: bash scripts/01_setup.sh "$KSU_REF"
 
-      # nohuc: HARDENED_USERCOPY can no longer be enabled (its Kconfig dependency is set to 'n'),
-      # so the final .config has it off whatever the defconfig says. The sub-options
-      # (HARDENED_USERCOPY_FALLBACK / _PAGESPAN) depend on it and go off too.
-      - name: Apply nohuc (HARDENED_USERCOPY off)
-        if: env.NOHUC == '1'
-        run: |
-          python3 - <<'PY'
-          import os, re
-          p = os.path.join(os.environ["WORK"], "src", "security", "Kconfig")
-          s = open(p).read()
-          m = re.search(r"^config HARDENED_USERCOPY\n(.*?)(?=^config |^menu|^endmenu|\Z)", s, re.S | re.M)
-          assert m, "config HARDENED_USERCOPY not found in security/Kconfig"
-          blk = m.group(0)
-          assert "depends on HAVE_HARDENED_USERCOPY_ALLOCATOR" in blk, "depends line not found"
-          new = blk.replace("depends on HAVE_HARDENED_USERCOPY_ALLOCATOR", "depends on n # nohuc", 1)
-          open(p, "w").write(s.replace(blk, new, 1))
-          print("security/Kconfig: HARDENED_USERCOPY now depends on n")
-          PY
-          grep -n -B1 -A6 "^config HARDENED_USERCOPY$" "$WORK/src/security/Kconfig"
-
       - name: Build kernel
         run: |
           bash scripts/02_build.sh
@@ -235,14 +200,6 @@ jobs:
 
       - name: Verify extra features are in the final .config
         run: bash scripts/04_extra_features.sh verify "$WORK/src" "${FEATURES:-bbr}"
-
-      - name: Verify nohuc (HARDENED_USERCOPY is off)
-        if: env.NOHUC == '1'
-        run: |
-          grep -E '^(# )?CONFIG_HARDENED_USERCOPY' "$WORK/src/out/.config" || echo "CONFIG_HARDENED_USERCOPY: not present (off)"
-          if grep -q '^CONFIG_HARDENED_USERCOPY=y' "$WORK/src/out/.config"; then
-            echo "::error::CONFIG_HARDENED_USERCOPY is still =y"; exit 1
-          fi
 
       - name: Show errors if build failed
         if: failure()
