@@ -30,6 +30,10 @@ on:
         description: "true (default) = send the finished zip + info to Telegram (needs secrets TG_BOT_TOKEN and TG_CHAT_ID). false = skip"
         default: "true"
 
+      boot_spoof_module:
+        description: "true (default) = also build a small KernelSU module (T225-BootSpoof.zip) that reports bootloader locked / verified boot green. Attached to the release. false = skip"
+        default: "true"
+
 permissions:
   contents: write
 
@@ -203,6 +207,38 @@ jobs:
           }
           get osm0sis/PlayIntegrityFork PIF
           get 5ec1cff/TrickyStore TrickyStore
+          ls -l _mods
+
+      # Small KernelSU module: sets the boot-state props at boot so apps see a locked bootloader.
+      # Props only (no hardware attestation). For Play Integrity still use PIF + TrickyStore + valid keybox.
+      - name: Build Boot-State Spoof module
+        if: inputs.boot_spoof_module == 'true'
+        run: |
+          mkdir -p _mods _bs
+          cat > _bs/module.prop <<'EOF'
+          id=t225_bootspoof
+          name=T225 Boot State Spoof
+          version=v1
+          versionCode=1
+          author=souvik
+          description=Reports the bootloader as locked / verified boot green (props only). Use with PIF + TrickyStore for Play Integrity.
+          EOF
+          cat > _bs/post-fs-data.sh <<'EOF'
+          #!/system/bin/sh
+          RP=resetprop
+          command -v resetprop >/dev/null 2>&1 || RP=/data/adb/ksu/bin/resetprop
+          sp() { "$RP" -n "$1" "$2"; }
+          sp ro.boot.verifiedbootstate green
+          sp ro.boot.flash.locked 1
+          sp ro.boot.vbmeta.device_state locked
+          sp ro.boot.veritymode enforcing
+          sp ro.boot.warranty_bit 0
+          sp ro.warranty_bit 0
+          sp ro.secure 1
+          sp ro.debuggable 0
+          EOF
+          chmod 755 _bs/post-fs-data.sh
+          (cd _bs && zip -qr ../_mods/T225-BootSpoof.zip .)
           ls -l _mods
 
       - name: Publish Release
