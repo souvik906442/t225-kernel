@@ -18,6 +18,9 @@ on:
       toolchain:
         description: "crdroid11 = original working clang 11.0.1 (default, safe) | neutron = latest Neutron Clang | zyc = latest ZyC Clang | slim = latest Slim LLVM (kernel.org) | llvm = upstream LLVM (see llvm_url)  [all except crdroid11 are experimental]"
         default: "crdroid11"
+      zyc_version:
+        description: "For toolchain=zyc only: ZyC Clang version to use, e.g. 14.0.6 (default) | 15.0.7 | 16.0.6 | latest (= newest, currently 23.0.0git)"
+        default: "14.0.6"
       llvm_url:
         description: "For neutron/zyc/slim/llvm only. Direct link to a Linux x86_64 .tar.xz / .tar.zst / .tar.gz (empty = auto: newest release of the chosen toolchain; llvm = LLVM 23.1.1 official)"
         default: ""
@@ -55,6 +58,7 @@ jobs:
       TOOLCHAIN: ${{ inputs.toolchain }}
       BUNDLE_APK: ${{ inputs.bundle_apk }}
       LLVM_URL: ${{ inputs.llvm_url }}
+      ZYC_VERSION: ${{ inputs.zyc_version }}
       FETCH_MODULES: ${{ inputs.fetch_modules }}
     steps:
       - uses: actions/checkout@v4
@@ -82,9 +86,16 @@ jobs:
                 URL=$(gh api repos/Neutron-Toolchains/clang-build-catalogue/releases/latest \
                   --jq '[.assets[] | select(.name | test("^neutron-clang-.*\\.tar\\.zst$"))][0].browser_download_url // empty') ;;
               zyc)
-                # newest ZyC Clang release (asset Clang-<ver>-<date>.tar.gz, ~570 MB)
-                URL=$(gh api repos/ZyCromerZ/Clang/releases/latest \
-                  --jq '[.assets[] | select(.name | test("\\.tar\\.(gz|xz|zst)$"))][0].browser_download_url // empty') ;;
+                # ZyC Clang release (asset Clang-<ver>-<date>.tar.gz). ZYC_VERSION (default 14.0.6)
+                # picks the newest release of that version (tag 14.0.6-<date>-release);
+                # ZYC_VERSION=latest = newest release of any version (currently 23.0.0git).
+                if [ "$ZYC_VERSION" = "latest" ]; then
+                  URL=$(gh api repos/ZyCromerZ/Clang/releases/latest \
+                    --jq '[.assets[] | select(.name | test("\\.tar\\.(gz|xz|zst)$"))][0].browser_download_url // empty')
+                else
+                  URL=$(gh api --paginate "repos/ZyCromerZ/Clang/releases?per_page=100" \
+                    --jq '.[] | select(.tag_name | startswith("'"$ZYC_VERSION"'-")) | .assets[] | select(.name | test("\\.tar\\.(gz|xz|zst)$")) | .browser_download_url' | head -n 1 || true)
+                fi ;;
               slim)
                 # newest stable (non -rc) Slim LLVM from kernel.org
                 BASE="https://mirrors.edge.kernel.org/pub/tools/llvm/files"
