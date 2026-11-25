@@ -26,6 +26,10 @@ on:
         description: "true = also download the latest Play Integrity Fix + TrickyStore module zips and attach them to the release (install them from the KernelSU Manager; TrickyStore needs your own keybox.xml)"
         default: "true"
 
+      send_telegram:
+        description: "true (default) = send the finished zip + info to Telegram (needs secrets TG_BOT_TOKEN and TG_CHAT_ID). false = skip"
+        default: "true"
+
 permissions:
   contents: write
 
@@ -46,6 +50,9 @@ jobs:
       FETCH_MODULES: ${{ inputs.fetch_modules }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Remember build start time
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Download kernel source and build files (Release src-v1)
         run: |
@@ -159,6 +166,7 @@ jobs:
           echo "Pinned driver version: tag=${KSU_VERSION_TAG_OVERRIDE:-none} code=${KSU_VERSION_OVERRIDE:-none}"
           grep -n "KernelSU-Next version\|KernelSU-Next tag" "$WORK/build.log" | head -4 || true
           grep -rn "KERNEL_SU_UAPI_VERSION" uapi/supercall.h kernel/uapi/supercall.h 2>/dev/null | head -2 || true
+          echo "KSU_COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
       - name: Verify extra features are in the final .config
         run: bash scripts/04_extra_features.sh verify "$WORK/src" "${FEATURES:-bbr}"
@@ -204,6 +212,64 @@ jobs:
           gh release create "build-${{ github.run_number }}" "$ZIP" $MODS \
             --title "T225 build #${{ github.run_number }} (KernelSU-Next: $KSU_REF, toolchain: $TOOLCHAIN)" \
             --notes "Auto-built flashable zip (toolchain: $TOOLCHAIN). If present, the PIF/TrickyStore zips are modules: install them in the KernelSU Manager (TrickyStore needs your own keybox.xml). Check after flashing: boots, WiFi/Bluetooth, overclock. Keep a known-good zip for TWRP."
+
+      # Telegram: send the finished zip with build info. Never fails the build.
+      # Needs repo secrets TG_BOT_TOKEN (from @BotFather) and TG_CHAT_ID.
+      # Bot API limit: 50 MB per file, caption max 1024 chars.
+      - name: Send zip to Telegram
+        if: success() && inputs.send_telegram == 'true'
+        continue-on-error: true
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+            echo "::warning::TG_BOT_TOKEN / TG_CHAT_ID secret not set; skipping Telegram"
+            exit 0
+          fi
+          ZIP=$(ls "$OUTDIR"/*.zip | head -1)
+          NAME=$(basename "$ZIP")
+          SIZE=$(du -h "$ZIP" | cut -f1)
+          MD5=$(md5sum "$ZIP" | cut -d' ' -f1)
+          SHA=$(sha256sum "$ZIP" | cut -d' ' -f1)
+          ELAPSED=$(( $(date +%s) - BUILD_START ))
+          TIME="$((ELAPSED/60))m $((ELAPSED%60))s"
+          CC=$("$WORK/toolchain_611/bin/clang" --version 2>/dev/null | head -1 || true)
+          [ -z "$CC" ] && CC="$TOOLCHAIN"
+          REL="https://github.com/${{ github.repository }}/releases/tag/build-${{ github.run_number }}"
+          CAPTION=$(printf '%s\n' \
+            "✅ T225 build #${{ github.run_number }} OK" \
+            "KernelSU-Next: ${KSU_REF}@${KSU_COMMIT:-?}" \
+            "Driver: ${KSU_VERSION_TAG_OVERRIDE:-own} (${KSU_VERSION_OVERRIDE:-own})" \
+            "Compiler: ${CC}" \
+            "Toolchain: ${TOOLCHAIN}" \
+            "Features: ${FEATURES}" \
+            "APK bundled: ${BUNDLE_APK}" \
+            "Size: ${SIZE} | Time: ${TIME}" \
+            "MD5: ${MD5}" \
+            "SHA256: ${SHA}" \
+            "Commit: $(git rev-parse --short HEAD)" \
+            "${REL}")
+          CAPTION="${CAPTION:0:1024}"
+          curl -sS --retry 3 \
+               -F chat_id="$TG_CHAT_ID" \
+               -F document=@"$ZIP" \
+               -F caption="$CAPTION" \
+               "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument"
+          echo
+
+      - name: Notify Telegram on failure
+        if: failure() && inputs.send_telegram == 'true'
+        continue-on-error: true
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ] && exit 0
+          curl -sS "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="$TG_CHAT_ID" \
+            --data-urlencode "text=❌ T225 build #${{ github.run_number }} FAILED (toolchain: $TOOLCHAIN, ref: $KSU_REF)
+          https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Keep build log on failure
         if: failure()
