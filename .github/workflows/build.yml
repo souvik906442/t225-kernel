@@ -26,7 +26,7 @@ on:
         default: ""
       features:
         description: "Extra kernel features (space separated): bbr | bbrdef | perf | wireguard | nohuc | quietpod | lean | lean2 | nosec | none  (bbr = BBR+FQ+FQ_CODEL available; bbrdef = also default cc/qdisc; perf = -O2 + BLK_WBT; nohuc = HARDENED_USERCOPY off, Wi-Fi/BT safe)"
-        default: "bbr bbrdef perf nohuc"
+        default: "bbr bbrdef perf nohuc quietpod"
 
       fetch_modules:
         description: "true = also download the latest Play Integrity Fix + TrickyStore module zips and attach them to the release (install them from the KernelSU Manager; TrickyStore needs your own keybox.xml)"
