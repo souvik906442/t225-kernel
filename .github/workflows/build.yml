@@ -7,7 +7,7 @@ on:
         description: "legacy | legacy-susfs | legacy-susfs-nomount | legacy-susfs-manual | legacy-susfs-nomount-manual | susfs-*"
         default: "legacy-susfs-manual"
       manager_source:
-        description: "Which Manager to fetch when manager_apk_url is empty: kowsu (default) = latest KowSU CI build | ksun = latest *spoofed* KernelSU-Next release"
+        description: "Manager to fetch when manager_apk_url is empty: kowsu (default) = latest KowSU manager | ksun = latest KernelSU-Next (KSUN) spoofed manager"
         default: "kowsu"
       manager_apk_url:
         description: "Direct link to the Manager .apk (optional; empty = automatic, see manager_source)"
@@ -138,22 +138,21 @@ jobs:
         run: |
           mkdir -p _apk
           URL="$APK_URL"; REL_NAME=""
-          if [ -z "$URL" ] && [ "$MANAGER_SOURCE" != "ksun" ]; then
+          SRC_M=$(echo "$MANAGER_SOURCE" | tr 'A-Z' 'a-z' | tr -d ' ')
+          case "$SRC_M" in kowsu|ksun) ;; *) echo "::error::manager_source must be 'kowsu' or 'ksun' (got '$MANAGER_SOURCE')"; exit 1 ;; esac
+          if [ -z "$URL" ] && [ "$SRC_M" = "kowsu" ]; then
             ROW=$(gh api "repos/JiuGeFaCai/ReSukiSU_CI/releases?per_page=100" \
               --jq '[.[] | select(.tag_name | startswith("KowSU_")) | select(any(.assets[]; .name | test("\\.apk$")))]
                     | sort_by(.published_at) | reverse | .[0] // empty
                     | [.name, ([.assets[] | select(.name | test("\\.apk$"))][0].browser_download_url)] | @tsv' || true)
-            if [ -n "$ROW" ]; then
-              REL_NAME=$(printf '%s' "$ROW" | cut -f1)
-              URL=$(printf '%s' "$ROW" | cut -f2)
-              echo "Latest KowSU release: $REL_NAME"
-            else
-              echo "::warning::Could not find a KowSU APK on the mirror; falling back to KernelSU-Next spoofed APK"
-            fi
-          fi
-          if [ -z "$URL" ]; then
+            REL_NAME=$(printf '%s' "$ROW" | cut -f1)
+            URL=$(printf '%s' "$ROW" | cut -f2)
+            [ -z "$URL" ] && { echo "::error::manager_source=kowsu but no KowSU APK found on the mirror (use manager_apk_url or manager_source=ksun)"; exit 1; }
+            echo "Latest KowSU release: $REL_NAME"
+          elif [ -z "$URL" ]; then
             URL=$(gh api "repos/KernelSU-Next/KernelSU-Next/releases?per_page=10" \
               --jq '[.[].assets[] | select(.name | test("spoofed.*release\\.apk$"))][0].browser_download_url // empty' || true)
+            [ -z "$URL" ] && { echo "::error::manager_source=ksun but no spoofed KernelSU-Next APK found"; exit 1; }
           fi
           if [ -n "$URL" ] && curl -fsSL --retry 3 -o _apk/manager.apk "$URL" && [ -s _apk/manager.apk ]; then
             echo "Manager APK: $URL"
