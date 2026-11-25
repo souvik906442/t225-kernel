@@ -22,6 +22,10 @@ on:
         description: "Extra kernel features (space separated): bbr | bbrdef | perf | wireguard | none  (bbr = BBR+FQ+FQ_CODEL available; bbrdef = also default cc/qdisc; perf = -O2 + BLK_WBT)"
         default: "bbr bbrdef perf"
 
+      fetch_modules:
+        description: "true = also download the latest Play Integrity Fix + TrickyStore module zips and attach them to the release (install them from the KernelSU Manager; TrickyStore needs your own keybox.xml)"
+        default: "true"
+
 permissions:
   contents: write
 
@@ -39,6 +43,7 @@ jobs:
       TOOLCHAIN: ${{ inputs.toolchain }}
       BUNDLE_APK: ${{ inputs.bundle_apk }}
       LLVM_URL: ${{ inputs.llvm_url }}
+      FETCH_MODULES: ${{ inputs.fetch_modules }}
     steps:
       - uses: actions/checkout@v4
 
@@ -173,12 +178,32 @@ jobs:
           fi
           bash scripts/03_package.sh "$APK"
 
+      # Userspace KernelSU modules (NOT part of the kernel): newest release zip of each.
+      # A failed download only warns; it never fails the kernel build.
+      - name: Fetch latest Play Integrity Fix + TrickyStore modules
+        if: inputs.fetch_modules == 'true'
+        run: |
+          mkdir -p _mods
+          get() {  # $1 = owner/repo   $2 = output name prefix
+            URL=$(gh api "repos/$1/releases/latest" \
+              --jq '[.assets[] | select(.name | test("\\.zip$")) | select(.name | test("debug|source";"i") | not)][0].browser_download_url // empty' || true)
+            if [ -n "$URL" ] && curl -fsSL --retry 3 -o "_mods/$2-$(basename "$URL")" "$URL" && [ -s "_mods/$2-$(basename "$URL")" ]; then
+              echo "Module $2: $URL"
+            else
+              echo "::warning::could not fetch module $2 from $1"
+            fi
+          }
+          get osm0sis/PlayIntegrityFork PIF
+          get 5ec1cff/TrickyStore TrickyStore
+          ls -l _mods
+
       - name: Publish Release
         run: |
           ZIP=$(ls "$OUTDIR"/*.zip)
-          gh release create "build-${{ github.run_number }}" "$ZIP" \
+          MODS=$(ls _mods/*.zip 2>/dev/null || true)
+          gh release create "build-${{ github.run_number }}" "$ZIP" $MODS \
             --title "T225 build #${{ github.run_number }} (KernelSU-Next: $KSU_REF, toolchain: $TOOLCHAIN)" \
-            --notes "Auto-built flashable zip (toolchain: $TOOLCHAIN). Check after flashing: boots, WiFi/Bluetooth, overclock. Keep a known-good zip for TWRP."
+            --notes "Auto-built flashable zip (toolchain: $TOOLCHAIN). If present, the PIF/TrickyStore zips are modules: install them in the KernelSU Manager (TrickyStore needs your own keybox.xml). Check after flashing: boots, WiFi/Bluetooth, overclock. Keep a known-good zip for TWRP."
 
       - name: Keep build log on failure
         if: failure()
